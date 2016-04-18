@@ -1,0 +1,121 @@
+---
+title: "Weight Lifting Classification"
+author: "Wei Lu"
+output: pdf_document
+---
+
+## Objectives
+Given the weight lifting dataset, we want to construct a model to predict if the subject under measurement is performing the exercise correctly. If not what type of common mistake the subject likely demonstrates.
+
+## Executive Summary
+
+
+## Exploratory Analysis
+
+First we download the dataset from the data source:
+Training data: https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+Test data: https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+Now we load the data into R:
+
+```{r}
+training <- read.csv("~/Downloads/pml-training.csv")
+testing <- read.csv("~/Downloads/pml-testing.csv")
+dim(training)
+dim(testing)
+```
+
+As we can see that the training dataset is very big. We cannot easily plot anything pairwise. Let's see if we can get rid of some columns.
+
+## Cleaning data
+
+```{r}
+# There are very few complete cases in training set and no complete case in testing set
+nrow(training[complete.cases(training),]) / nrow(training)
+nrow(training[complete.cases(testing),]) / nrow(testing)
+
+# Let's remove the columns from training where their respective values are all NA in test
+na_count <- sapply(testing, function(y) sum(length(which(is.na(y)))))
+na_columns <- names(na_count[na_count == nrow(testing)])
+training <- training[, -which(names(training) %in% na_columns)]
+
+# We ended up with much fewer columns, and all cases left happen to be complete
+dim(training)
+nrow(training[complete.cases(training),])
+
+# We also take away the index column, user name and duplicate timestamp columns
+throwaway_columns <- c('X', 'user_name', 'raw_timestamp_part_1', 'raw_timestamp_part_2')
+new_training <- training[, -which(names(training) %in% throwaway_columns)]
+
+# Also clean up testing data set in the same manner for later use
+testing <- testing[, -which(names(testing) %in% na_columns)]
+new_testing <- testing[, -which(names(testing) %in% throwaway_columns)]
+```
+
+## Model Selection
+
+First we split the training data into training and validation sets:
+
+```{r}
+library(caret)
+set.seed(1337) # set seed for reproducibility
+
+split=0.80
+inTrain <- createDataPartition(new_training$classe, p=split, list=FALSE)
+data_train <- new_training[inTrain,]
+data_test <- new_training[-inTrain,]
+x_test <- data_test[,1:55]
+y_test <- data_test[,56]
+```
+
+We try a fast-running training method with default parameters:
+
+```{r cache=TRUE}
+model_rpart <- train(classe ~., method='rpart', data=data_train)
+predictions <- predict(model_rpart, x_test)
+confusionMatrix(predictions, y_test)
+```
+
+The resulting accuracy is not satisfactory. Let's try to improve it by adding cross validation:
+
+```{r cache=TRUE}
+control <- trainControl(method = "cv", number = 5)
+model_rpart_cv <- train(classe ~., method='rpart', trControl=control, data=data_train)
+predictions <- predict(model_rpart_cv, x_test)
+confusionMatrix(predictions, y_test)
+```
+
+We don't see much improvements. Let's switch to random forrest, which runs slower but may yield better accuracy:
+
+```{r cache=TRUE}
+library(randomForest)
+model_rf <- randomForest(data_train[, 1:55], data_train[, 56]) # use randomForest instead of train because it's faster
+predictions <- predict(model_rf, x_test)
+confusionMatrix(predictions, y_test)
+```
+
+We can already see significant accuracy improvements. Adding cross validation:
+
+```{r cache=TRUE}
+control <- trainControl(method = "cv", number = 5)
+model_rf_cv <- train(classe ~., method='rf', trControl=control, data=data_train)
+predictions <- predict(model_rf_cv, x_test)
+confusionMatrix(predictions, y_test)
+```
+
+## Model Diagnostics
+
+Next we calculate the expected out of sample error:
+
+```{r}
+1 - unname(confusionMatrix(predictions, y_test)$overall[1])
+```
+
+## Prediction
+
+Lastly, we predict the outcome on the test data set:
+
+```{r cache=TRUE}
+predict(model_rf_cv, new_testing)
+```
+
